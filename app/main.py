@@ -1,12 +1,24 @@
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.ephemeris import positions_au
 
 app = FastAPI(title="Solar System API")
 
 
+# --- Pages ---
+@app.get("/", include_in_schema=False)
+def index():
+    # Serve the frontend
+    return FileResponse("app/static/index.html")
+
+
+# --- Static files (JS/CSS/etc.) ---
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+# --- API ---
 @app.get("/api/positions")
 def get_positions(
     t: str = Query(
@@ -26,11 +38,3 @@ def get_positions(
         "frame": "heliocentric",
         "positions": pos,
     }
-
-
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-
-@app.get("/")
-def index():
-    return FileResponse("app/static/index.html")
