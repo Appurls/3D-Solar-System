@@ -1,0 +1,8 @@
+# fastapi==0.115.6
+# uvicorn[standard]==0.32.1
+# skyfield==1.49
+# numpy==2.1.3
+fastapi
+uvicorn
+skyfield
+numpy

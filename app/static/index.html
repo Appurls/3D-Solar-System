@@ -2,8 +2,10 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Solar System</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Solar System (Real Positions)</title>
 
+    <!-- Import map so solar.js can use: import * as THREE from "three" -->
     <script type="importmap">
     {
       "imports": {
@@ -12,12 +14,80 @@
       }
     }
     </script>
+
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+
+      #hud{
+        position: fixed;
+        top: 14px; left: 14px;
+        padding: 12px;
+        z-index: 10;
+        background: rgba(0,0,0,0.55);
+        color: white;
+        font: 13px system-ui;
+        border-radius: 14px;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        user-select: none;
+      }
+
+      #hudRow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+      #timeLabel{
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-variant-numeric: tabular-nums;
+      }
+
+      #hud button{
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.10);
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      #hud button:hover{ background: rgba(255,255,255,0.18); }
+      #hud button:active{ transform: translateY(1px); }
+
+      #hud button.primary{
+        background: rgba(255,255,255,0.22);
+      }
+
+      #hud input[type="datetime-local"]{
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(0,0,0,0.25);
+        color: white;
+      }
+
+      /* kill favicon noise */
+      link[rel="icon"] { display:none; }
+    </style>
+
+    <link rel="icon" href="data:," />
   </head>
 
   <body>
     <div id="hud">
-      <span id="timeLabel"></span>
-      <button id="refreshBtn">Refresh</button>
+      <div id="hudRow">
+        <span id="timeLabel">—</span>
+
+        <button id="realtimeBtn" class="primary">Real-time</button>
+        <button id="fastBtn">Fast</button>
+
+        <input id="datePick" type="datetime-local" />
+        <button id="goBtn">Go</button>
+
+        <button id="refreshBtn">Now</button>
+      </div>
     </div>
 
     <script type="module" src="/static/solar.js"></script>
