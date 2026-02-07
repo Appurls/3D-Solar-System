@@ -1,250 +1,232 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-/* ---------------- Texture helpers ---------------- */
-const loader = new THREE.TextureLoader();
-function tex(name) {
-  const t = loader.load(`/static/textures/${name}.jpg`);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+// ---------- Config ----------
+const AU_SCALE = 10; // used only for direction (not radius)
+const FLATTEN_Y = 0.12;
+const UPDATE_INTERVAL_MS = 200;
+const SUN_RADIUS = 6;
+
+// Manual distances from the Sun (in scene units)
+const MANUAL_RADIUS = {
+    Mercury: 25,
+    Venus: 33,
+    Earth: 40,
+    Mars: 55,
+    Jupiter: 86,
+    Saturn: 98,
+    Uranus: 110,
+    Neptune: 118,
+};
+
+// ---------- Helpers ----------
+function mapVec(p) {
+    return {
+        x: p.x * AU_SCALE,
+        y: p.y * AU_SCALE,
+        z: p.z * AU_SCALE,
+    };
 }
 
-/* ---------------- UI ---------------- */
-const timeLabel = document.getElementById("timeLabel");
-const nowBtn = document.getElementById("refreshBtn");
-const realtimeBtn = document.getElementById("realtimeBtn");
-const fastBtn = document.getElementById("fastBtn");
-const datePick = document.getElementById("datePick");
-const goBtn = document.getElementById("goBtn");
+async function fetchPositions(tIso) {
+    const url = `/api/positions?t=${encodeURIComponent(tIso)}&_=${Date.now()}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+}
 
-/* ---------------- Time control ----------------
-   Speed is "days per real second".
-   - 0 => real-time
-   - 1 => 1 day/sec
-   - 30 => ~1 month/sec
-   Note:  API is fetched 2x/sec, so super high speeds will “jump” between samples.
-------------------------------------------------- */
-let mode = "realtime";               // "realtime" | "fast"
-let simTime = new Date();
-let fastDaysPerSecond = 5;           //  change this number anytime
-let lastTick = performance.now();
-let lastFetchMs = 0;
-const FETCH_INTERVAL_MS = 250;       // 4 fetches/sec (was 500)
-
-/* ---------------- Scene ---------------- */
+// ---------- Scene ----------
 const scene = new THREE.Scene();
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1e7);
+const camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1e6
+);
 camera.position.set(0, 40, 120);
-camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000000, 1);
 document.body.appendChild(renderer.domElement);
 
-// Keep canvas behind HUD but visible
 renderer.domElement.style.position = "fixed";
 renderer.domElement.style.inset = "0";
 renderer.domElement.style.zIndex = "0";
 
-/* ---------------- Controls ---------------- */
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.enableZoom = true;
-controls.zoomSpeed = 1.2;
-controls.enablePan = false;
-controls.minDistance = 12;
-controls.maxDistance = 2500;
 controls.target.set(0, 0, 0);
+controls.update();
 
-controls.mouseButtons = {
-  LEFT: THREE.MOUSE.ROTATE,
-  MIDDLE: THREE.MOUSE.DOLLY,
-  RIGHT: THREE.MOUSE.ROTATE,
-};
-
-/* ---------------- Lighting ---------------- */
-scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-const sunLight = new THREE.PointLight(0xffffff, 1.4);
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+const sunLight = new THREE.PointLight(0xffffff, 1.8);
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
 
-/* ---------------- Sun ---------------- */
+// ---------- Textures ----------
+const textureLoader = new THREE.TextureLoader();
+const tex = {
+    Sun: "/static/textures/sun.jpg",
+    Mercury: "/static/textures/mercury.jpg",
+    Venus: "/static/textures/venus.jpg",
+    Earth: "/static/textures/earth.jpg",
+    Mars: "/static/textures/mars.jpg",
+    Jupiter: "/static/textures/jupiter.jpg",
+    Saturn: "/static/textures/saturn.jpg",
+    Uranus: "/static/textures/uranus.jpg",
+    Neptune: "/static/textures/neptune.jpg",
+};
+
+// Sun
 const sun = new THREE.Mesh(
-  new THREE.SphereGeometry(3.5, 24, 24),
-  new THREE.MeshStandardMaterial({
-    map: tex("sun.jpg"),
-    emissive: 0xffffff,
-    emissiveIntensity: 1.2,
-    roughness: 1.0,
-    metalness: 0.0,
-  })
+    new THREE.SphereGeometry(SUN_RADIUS, 64, 64),
+    new THREE.MeshBasicMaterial({ map: textureLoader.load(tex.Sun) })
 );
 scene.add(sun);
 
-/* ---------------- Planets + textures ---------------- */
-const AU_TO_UNITS = 24;
-const SIZE_MULT = 2.2;
-
-const planetDefs = {
-  mercury: { r: 0.6 },
-  venus: { r: 1.2 },
-  earth: { r: 1.3 },
-  mars: { r: 0.9 },
-  jupiter: { r: 2.8 },
-  saturn: { r: 2.5 },
-  uranus: { r: 2.0 },
-  neptune: { r: 2.0 },
+// Planets
+const bodies = {
+    Mercury: { r: 1.4 },
+    Venus: { r: 2.2 },
+    Earth: { r: 2.3 },
+    Mars: { r: 1.8 },
+    Jupiter: { r: 5.4 },
+    Saturn: { r: 4.8 },
+    Uranus: { r: 3.8 },
+    Neptune: { r: 3.8 },
 };
 
-const planets = {};
-for (const [name, def] of Object.entries(planetDefs)) {
-  const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(def.r * SIZE_MULT, 48, 48),
-    new THREE.MeshStandardMaterial({
-      map: tex(name),
-      roughness: 0.95,
-      metalness: 0.0,
-    })
-  );
-  scene.add(mesh);
-  planets[name] = mesh;
-}
-
-/* ---------------- Saturn rings (uses saturn_ring.png) ----------------
-   Put your ring texture at: app/static/textures/saturn_ring.png
-   (PNG works best because it can include transparency)
------------------------------------------------------------------------ */
-const ringTex = loader.load("/static/textures/saturn_ring.png");
-ringTex.colorSpace = THREE.SRGBColorSpace;
-
-const saturnRings = new THREE.Mesh(
-  new THREE.RingGeometry(planetDefs.saturn.r * SIZE_MULT * 1.2, planetDefs.saturn.r * SIZE_MULT * 2.2, 128),
-  new THREE.MeshStandardMaterial({
-    map: ringTex,
-    transparent: true,
-    side: THREE.DoubleSide,
-    roughness: 1.0,
-    metalness: 0.0,
-  })
-);
-// tilt rings like real Saturn
-saturnRings.rotation.x = THREE.MathUtils.degToRad(70);
-scene.add(saturnRings);
-
-/* ---------------- Data ---------------- */
-async function fetchPositions(tIso) {
-  const res = await fetch(`/api/positions?t=${encodeURIComponent(tIso)}`);
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  return res.json();
-}
-function titleCaseKey(lower) {
-  return lower[0].toUpperCase() + lower.slice(1);
-}
-
-async function updatePlanets(tIso) {
-  const data = await fetchPositions(tIso);
-
-  for (const name of Object.keys(planetDefs)) {
-    const key = titleCaseKey(name);           // API uses "Earth", "Mars", etc.
-    const p = data.positions?.[key];
-    if (!p) continue;
-
-    planets[name].position.set(
-      p.x * AU_TO_UNITS,
-      p.z * AU_TO_UNITS * 0.2,
-      p.y * AU_TO_UNITS
+const meshes = {};
+for (const [name, { r }] of Object.entries(bodies)) {
+    const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 32, 32),
+        new THREE.MeshStandardMaterial({ map: textureLoader.load(tex[name]) })
     );
-  }
-
-  // Keep rings centered on Saturn and rotate with it
-  saturnRings.position.copy(planets.saturn.position);
+    meshes[name] = mesh;
+    scene.add(mesh);
 }
 
-/* ---------------- Loop ---------------- */
-function tick() {
-  const now = performance.now();
-  const dt = (now - lastTick) / 1000;
-  lastTick = now;
+// ---------- HUD ----------
+const timeLabel = document.getElementById("timeLabel");
+const modeBadge = document.getElementById("modeBadge");
+const debug = document.getElementById("debug");
+const modeSelect = document.getElementById("modeSelect");
+const fastRate = document.getElementById("fastRate");
+const datePick = document.getElementById("datePick");
+const goBtn = document.getElementById("goBtn");
+const refreshBtn = document.getElementById("refreshBtn");
 
-  if (mode === "realtime") {
-    simTime = new Date();
-  } else {
-    // Clamp dt so tab-switching doesn't jump years instantly
-    const dtClamped = Math.min(dt, 0.25);
-    simTime = new Date(simTime.getTime() + dtClamped * fastDaysPerSecond * 86400 * 1000);
-  }
+let mode = "realtime";
+let currentTime = new Date();
+let speedDaysPerSec = 1;
+let lastTick = performance.now();
 
-  const tIso = simTime.toISOString();
-  timeLabel.textContent = `${tIso}  (${mode === "fast" ? `${fastDaysPerSecond} d/s` : "real-time"})`;
-
-  if (now - lastFetchMs > FETCH_INTERVAL_MS) {
-    lastFetchMs = now;
-    updatePlanets(tIso).catch(console.error);
-  }
+function updateTimeLabel() {
+    if (timeLabel) timeLabel.textContent = currentTime.toLocaleString();
+    if (modeBadge) {
+        modeBadge.textContent =
+            mode === "fast" ? `FAST ${speedDaysPerSec} day/sec` :
+                mode === "fixed" ? "FIXED" :
+                    "REAL‑TIME";
+    }
 }
 
-function animate() {
-  requestAnimationFrame(animate);
-
-  tick();
-
-  controls.target.set(0, 0, 0);
-  controls.update();
-
-  renderer.render(scene, camera);
+function setMode(newMode) {
+    mode = newMode;
+    if (modeSelect) modeSelect.value = mode;
+    updateTimeLabel();
 }
 
-/* ---------------- Events ---------------- */
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+modeSelect?.addEventListener("change", () => {
+    setMode(modeSelect.value);
 });
 
-realtimeBtn?.addEventListener("click", () => {
-  mode = "realtime";
-  lastFetchMs = 0;
-  realtimeBtn.classList.add("primary");
-  fastBtn?.classList.remove("primary");
+fastRate?.addEventListener("change", () => {
+    speedDaysPerSec = Number(fastRate.value) || 1;
+    updateTimeLabel();
 });
 
-fastBtn?.addEventListener("click", () => {
-  mode = "fast";
-  lastFetchMs = 0;
-  fastBtn.classList.add("primary");
-  realtimeBtn?.classList.remove("primary");
-});
-
-nowBtn?.addEventListener("click", () => {
-  mode = "realtime";
-  simTime = new Date();
-  lastFetchMs = 0;
-  realtimeBtn?.classList.add("primary");
-  fastBtn?.classList.remove("primary");
+refreshBtn?.addEventListener("click", () => {
+    currentTime = new Date();
+    setMode("realtime");
+    updateFromApi().catch(() => { });
 });
 
 goBtn?.addEventListener("click", () => {
-  if (!datePick?.value) return;
-  simTime = new Date(datePick.value);   // local datetime
-  mode = "fast";
-  lastFetchMs = 0;
-  fastBtn?.classList.add("primary");
-  realtimeBtn?.classList.remove("primary");
-  updatePlanets(simTime.toISOString()).catch(console.error);
+    if (!datePick?.value) return;
+    const chosen = new Date(datePick.value);
+    if (!isNaN(chosen.getTime())) {
+        currentTime = chosen;
+        setMode("fixed");
+        updateFromApi().catch(() => { });
+    }
 });
 
-//  press 1/2/3/4 to set speed quickly
-window.addEventListener("keydown", (e) => {
-  if (e.key === "1") fastDaysPerSecond = 1;
-  if (e.key === "2") fastDaysPerSecond = 5;
-  if (e.key === "3") fastDaysPerSecond = 20;
-  if (e.key === "4") fastDaysPerSecond = 60;
+// ---------- API update ----------
+async function updateFromApi() {
+    const t = (mode === "realtime") ? new Date() : currentTime;
+    const data = await fetchPositions(t.toISOString());
+
+    for (const [name, mesh] of Object.entries(meshes)) {
+        const p = data.positions?.[name];
+        if (!p) continue;
+
+        const v = mapVec(p);
+
+        // use x/y as orbit plane
+        const dirR = Math.hypot(v.x, v.y) || 1e-9;
+        const targetR = MANUAL_RADIUS[name] ?? dirR;
+
+        const x = (v.x / dirR) * targetR;
+        const z = (v.y / dirR) * targetR;
+
+        // z from API becomes small vertical offset
+        const y = v.z * FLATTEN_Y;
+
+        mesh.position.set(x, y, z);
+    }
+
+    if (debug) {
+        const keys = Object.keys(data.positions || {});
+        debug.textContent = `API ok • t=${t.toISOString()} • keys=${keys.join(", ")}`;
+    }
+}
+
+// Prime once
+updateFromApi().catch(() => {
+    if (debug) debug.textContent = "API error (fallback showing).";
 });
 
-/* ---------------- Init ---------------- */
-if (datePick) datePick.value = new Date().toISOString().slice(0, 16);
-updatePlanets(new Date().toISOString()).catch(console.error);
-animate();
+setInterval(() => {
+    updateFromApi().catch(() => { });
+}, UPDATE_INTERVAL_MS);
+
+// ---------- Render ----------
+function animate(now) {
+    requestAnimationFrame(animate);
+
+    const dt = Math.max(0, (now - lastTick) / 1000);
+    lastTick = now;
+
+    if (mode === "realtime") {
+        currentTime = new Date();
+    } else if (mode === "fast") {
+        const msPerDay = 24 * 60 * 60 * 1000;
+        currentTime = new Date(currentTime.getTime() + dt * speedDaysPerSec * msPerDay);
+    }
+
+    updateTimeLabel();
+    controls.update();
+    renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+
+window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});

@@ -41,7 +41,7 @@ The backend serves real planetary position data (ephemeris-based), while the fro
 ### 1) Build the image
 ```bash
 docker build -t solar-system .
-docker run --rm -p 8000:8000 solar-syste
+docker run --rm -p 8000:8000 solar-system
 ```
 Open in browser
 App: http://localhost:8000
